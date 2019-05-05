@@ -1940,7 +1940,7 @@ akai_wav2sample(int wavfd,char *wavname,struct vol_s *volp,u_int findex,
 	static u_int wavsamplesize;
 	static u_int wavsamplesizealloc;
 	static u_int wavsamplecount;
-	static u_char *wavbuf, *tempbuf;
+	static u_char *wavbuf, *tempbuf = NULL;
 	static char *errstrp;
 	static int nlen;
 	static char *tname;
@@ -1953,7 +1953,8 @@ akai_wav2sample(int wavfd,char *wavname,struct vol_s *volp,u_int findex,
 	static int wavakaiheadfound;
 #endif
 	static int ret;
-	static u_int ch, ltype = -1, lstart, lend;
+	int ltype = -1;
+	u_int ch, lstart, lend;
 
 	if (wavname==NULL){
 		return -1;
@@ -2074,6 +2075,8 @@ akai_wav2sample(int wavfd,char *wavname,struct vol_s *volp,u_int findex,
 				goto akai_wav2sample_exit;
 			}
 			wavsamplesize /= 2;
+		} else {
+			tempbuf = NULL;
 		}
 	}
 	if (bitnr!=16){
@@ -2187,7 +2190,7 @@ akai_wav2sample(int wavfd,char *wavname,struct vol_s *volp,u_int findex,
 		sname[nlen]='\0';
 
 		if(chnr == 1) {
-			sprintf(fname,"%12s%s",sname,tname);
+			sprintf(fname,"%-12s%s",sname,tname);
 		} else {
 			if(ch == 0) {
 				sprintf(fname,"%-10s-L%s",sname,tname);
@@ -2407,31 +2410,33 @@ akai_wav2sample(int wavfd,char *wavname,struct vol_s *volp,u_int findex,
 			s3000hdr.s1000.slen[0]=0xff&samplecount;
 
 			/* set loop data */
-			if(ltype == 0) {
-				u_int llen = lend - lstart;
+			if(ltype >= 0) {
+				if(ltype == 0) {
+					u_int llen = lend - lstart;
 
-				s3000hdr.s1000.lnum = 1;
-				s3000hdr.s1000.lfirst = 0;
-				
-				s3000hdr.s1000.loop[0].at[3]=0xff&(lend>>24);
-				s3000hdr.s1000.loop[0].at[2]=0xff&(lend>>16);
-				s3000hdr.s1000.loop[0].at[1]=0xff&(lend>>8);
-				s3000hdr.s1000.loop[0].at[0]=0xff&lend;
+					s3000hdr.s1000.lnum = 1;
+					s3000hdr.s1000.lfirst = 0;
+					
+					s3000hdr.s1000.loop[0].at[3]=0xff&(lend>>24);
+					s3000hdr.s1000.loop[0].at[2]=0xff&(lend>>16);
+					s3000hdr.s1000.loop[0].at[1]=0xff&(lend>>8);
+					s3000hdr.s1000.loop[0].at[0]=0xff&lend;
 
-				s3000hdr.s1000.loop[0].flen[1]=0;
-				s3000hdr.s1000.loop[0].flen[0]=0;
+					s3000hdr.s1000.loop[0].flen[1]=0;
+					s3000hdr.s1000.loop[0].flen[0]=0;
 
-				s3000hdr.s1000.loop[0].len[3]=0xff&(llen>>24);
-				s3000hdr.s1000.loop[0].len[2]=0xff&(llen>>16);
-				s3000hdr.s1000.loop[0].len[1]=0xff&(llen>>8);
-				s3000hdr.s1000.loop[0].len[0]=0xff&llen;
+					s3000hdr.s1000.loop[0].len[3]=0xff&(llen>>24);
+					s3000hdr.s1000.loop[0].len[2]=0xff&(llen>>16);
+					s3000hdr.s1000.loop[0].len[1]=0xff&(llen>>8);
+					s3000hdr.s1000.loop[0].len[0]=0xff&llen;
 
-				s3000hdr.s1000.loop[0].time[1]=0xff&(SAMPLE1000LOOP_TIME_HOLD>>8);
-				s3000hdr.s1000.loop[0].time[0]=0xff&SAMPLE1000LOOP_TIME_HOLD;
+					s3000hdr.s1000.loop[0].time[1]=0xff&(SAMPLE1000LOOP_TIME_HOLD>>8);
+					s3000hdr.s1000.loop[0].time[0]=0xff&SAMPLE1000LOOP_TIME_HOLD;
 
-				printf("Created loop at %d with length %d\n", lend, llen);
-			} else {
-				printf("Unsupported loop type %d\n", ltype);
+					printf("created loop at %d with length %d\n", lend, llen);
+				} else {
+					printf("unsupported loop type %d\n", ltype);
+				}
 			}
 
 			/* set RAM name of sample */

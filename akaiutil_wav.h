@@ -108,7 +108,7 @@ extern int wav_read_head(int indes,u_int *bcountp,
 						 u_int *datasizep,u_int *chnrp,u_int *sampratep,u_int *bitnrp,
 						 u_int *extrasizep,
 						 char **errstrp,
-						 u_int *ltype, u_int *lstart, u_int *lend);
+						 int *ltype, u_int *lstart, u_int *lend);
 
 #ifndef WAV_AKAIHEAD_DISABLE
 #define WAV_AKAIHEADTYPE_NONE			0x00

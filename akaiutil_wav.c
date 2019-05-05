@@ -121,7 +121,7 @@ wav_read_head(int indes,
 			  u_int *datasizep,u_int *chnrp,u_int *sampratep,u_int *bitnrp,
 			  u_int *extrasizep,
 			  char **errstrp,
-			  u_int *ltype, u_int *lstart, u_int *lend)
+			  int *ltype, u_int *lstart, u_int *lend)
 {
 	struct wav_riffhead_s wavriffhead;
 	struct wav_chunkhead_s wavchunkhead;
