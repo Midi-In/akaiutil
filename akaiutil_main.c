@@ -3542,7 +3542,7 @@ main_restart: /* restart with opened disks */
 										curvolp->osver, /* default: osver from volume */
 										NULL, /* no tags */
 										NULL,
-										WAV2SAMPLE_OPEN)!=0){
+										WAV2SAMPLE_OPEN | WAV2SAMPLE_OVERWRITE)!=0){
 						fprintf(stderr,"WAV import error\n");
 						restore_curdir();
 						goto main_parser_next;

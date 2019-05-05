@@ -1940,7 +1940,7 @@ akai_wav2sample(int wavfd,char *wavname,struct vol_s *volp,u_int findex,
 	static u_int wavsamplesize;
 	static u_int wavsamplesizealloc;
 	static u_int wavsamplecount;
-	static u_char *wavbuf;
+	static u_char *wavbuf, *tempbuf;
 	static char *errstrp;
 	static int nlen;
 	static char *tname;
@@ -1953,6 +1953,7 @@ akai_wav2sample(int wavfd,char *wavname,struct vol_s *volp,u_int findex,
 	static int wavakaiheadfound;
 #endif
 	static int ret;
+	static u_int ch, ltype = -1, lstart, lend;
 
 	if (wavname==NULL){
 		return -1;
@@ -2045,7 +2046,8 @@ akai_wav2sample(int wavfd,char *wavname,struct vol_s *volp,u_int findex,
 #else
 							NULL,
 #endif
-							&errstrp)<0){
+							&errstrp,
+							&ltype, &lstart, &lend)<0){
 		if (errstrp!=NULL){
 			fprintf(stderr,"%s\n",errstrp);
 		}
@@ -2053,12 +2055,26 @@ akai_wav2sample(int wavfd,char *wavname,struct vol_s *volp,u_int findex,
 		goto akai_wav2sample_exit;
 	}
 
+	printf("bcount: %d, wavsamplesize: %d, chnr: %d, samplerate: %d, bitnr: %d, extrasize: %d\n",
+		bcount, wavsamplesize, chnr, samplerate, bitnr, extrasize);
+
 	/* check parameters */
-	if (chnr!=1){
-		fprintf(stderr,"WAV must be mono\n");
-		/* unknown or unsupported */
-		ret=1; /* no error */
-		goto akai_wav2sample_exit;
+	if (type == AKAI_SAMPLE900_FTYPE) {
+		if (chnr!=1){
+			fprintf(stderr,"WAV must be mono on S900\n");
+			/* unknown or unsupported */
+			ret=1; /* no error */
+			goto akai_wav2sample_exit;
+		}
+	} else {
+		if(chnr == 2) {
+			tempbuf = (u_char *)malloc(wavsamplesize);
+			if (READ(wavfd,tempbuf,wavsamplesize)!=(int)wavsamplesize){
+				fprintf(stderr,"cannot read stereo sample\n");
+				goto akai_wav2sample_exit;
+			}
+			wavsamplesize /= 2;
+		}
 	}
 	if (bitnr!=16){
 		fprintf(stderr,"WAV must be 16bit\n");
@@ -2066,327 +2082,386 @@ akai_wav2sample(int wavfd,char *wavname,struct vol_s *volp,u_int findex,
 		ret=1; /* no error */
 		goto akai_wav2sample_exit;
 	}
+	
 
-	/* number of samples in WAV file */
-	/* Note: can be an odd number */
-	wavsamplecount=wavsamplesize/2; /* /2 for 16bit per WAV sample word */
+	for(ch = 0; ch < chnr; ch++) {
+		printf("writing channel %d (wavsamplesize = %d)\n", ch, wavsamplesize);
 
-	/* allocate WAV sample buffer */
-	if (type==AKAI_SAMPLE900_FTYPE){ /* S900 sample? */
-		/* Note: allocate WAV buffer for an rounded up even number of samples */
-		wavsamplesizealloc=(0xfffffffe&(wavsamplecount+1))*2; /* *2 for 16bit per WAV sample word */
-	}else{
-		wavsamplesizealloc=wavsamplesize;
-	}
-	wavbuf=(u_char *)malloc(wavsamplesizealloc);
-	if (wavbuf==NULL){
-		perror("malloc");
-		goto akai_wav2sample_exit;
-	}
+		/* number of samples in WAV file */
+		/* Note: can be an odd number */
+		wavsamplecount=wavsamplesize/2; /* /2 for 16bit per WAV sample word */
 
-	/* read WAV sample to memory */
-	if (READ(wavfd,wavbuf,wavsamplesize)!=(int)wavsamplesize){
-		fprintf(stderr,"cannot read sample\n");
-		goto akai_wav2sample_exit;
-	}
-	bcount+=wavsamplesize;
-	if (wavsamplesize<wavsamplesizealloc){
-		/* zero padding */
-		bzero(wavbuf+wavsamplesize,wavsamplesizealloc-wavsamplesize);
-	}
-
-	/* sample size */
-	if (type==AKAI_SAMPLE900_FTYPE){ /* S900 sample? */
-		/* S900 sample */
-		/* number of samples per part  */
-		samplecountpart=(wavsamplecount+1)/2; /* round up */
-		samplecount=2*samplecountpart; /* samplecount must be an even number */
-		if (s9cflag){
-			/* S900 compressed sample format */
-			/* first pass to convert 16bit WAV sample format into S900 compressed sample format */
-			/* Note: first pass of akai_sample900compr_wav2sample() requires WAV sample to be loaded to wavbuf */
-			r=akai_sample900compr_wav2sample(NULL,wavbuf,samplecountpart); /* NULL: first pass */
-			if (r<0){
-				goto akai_wav2sample_exit;
-			}
-			/* size in bytes */
-			samplesize=(u_int)r;
+		/* allocate WAV sample buffer */
+		if (type==AKAI_SAMPLE900_FTYPE){ /* S900 sample? */
+			/* Note: allocate WAV buffer for an rounded up even number of samples */
+			wavsamplesizealloc=(0xfffffffe&(wavsamplecount+1))*2; /* *2 for 16bit per WAV sample word */
 		}else{
-			/* S900 non-compressed sample format */
-			/* size in bytes */
-			samplesize=3*samplecountpart;
+			wavsamplesizealloc=wavsamplesize;
 		}
-	}else{
-		/* S1000/S3000 sample */
-		samplecountpart=0;
-		samplecount=wavsamplecount;
-		/* size in bytes */
-		samplesize=samplecount*2; /* *2 for 16bit per sample word */
-	}
-	if (hdrsize+samplesize>AKAI_FILE_SIZEMAX){
-		fprintf(stderr,"WAV too large\n");
-		/* unknown or unsupported */
-		ret=1; /* no error */
-		goto akai_wav2sample_exit;
-	}
-
-	if (type==AKAI_SAMPLE900_FTYPE){ /* S900 sample? */
-		/* allocate sample buffer */
-		sbuf=(u_char *)malloc(samplesize);
-		if (sbuf==NULL){
+		wavbuf=(u_char *)malloc(wavsamplesizealloc);
+		if (wavbuf==NULL){
 			perror("malloc");
 			goto akai_wav2sample_exit;
 		}
-	}else{
-		/* Note: no sample format conversion necessary for S1000/S3000 */
-		sbuf=wavbuf;
-	}
 
-	/* sample name */
-	if ((type==AKAI_SAMPLE900_FTYPE)||(volp->type==AKAI_VOL_TYPE_S900)){ /* S900 sample or S900 volume? */
-		if (nlen>AKAI_NAME_LEN_S900){
-			nlen=AKAI_NAME_LEN_S900;
-		}
-	}else{
-		if (nlen>AKAI_NAME_LEN){
-			nlen=AKAI_NAME_LEN;
-		}
-	}
-	bcopy(wavname,sname,nlen);
-	sname[nlen]='\0';
-	sprintf(fname,"%s%s",sname,tname);
+		if(chnr==2) {
+			u_int i, j;
+			u_short * d = (u_short*)wavbuf;
+			u_short * s = (u_short*)tempbuf;
 
-#ifdef WAV2SAMPLE_OVERWRITE
-	if ((findex==AKAI_CREATE_FILE_NOINDEX)
-		/* check if destination file already exists */
-		&&(akai_find_file(volp,&tmpfile,fname)==0)){
-		/* exists */
-		if (what&WAV2SAMPLE_OVERWRITE){
-			/* delete file */
-			if (akai_delete_file(&tmpfile)<0){
-				fprintf(stderr,"cannot overwrite existing file\n");
+			for(i = ch, j = 0; i < wavsamplesize; i+=2, j++) {
+				d[j] = s[i];
+			}
+		} else {
+			/* read WAV sample to memory */
+			if (READ(wavfd,wavbuf,wavsamplesize)!=(int)wavsamplesize){
+				fprintf(stderr,"cannot read sample\n");
 				goto akai_wav2sample_exit;
 			}
-		}else{
-			fprintf(stderr,"file name already used\n");
-			goto akai_wav2sample_exit;
-		}
-	}
-#endif
-
-	/* correct osver if necessary */
-	if (type==AKAI_SAMPLE900_FTYPE){
-		/* S900 sample */
-		if (s9cflag){
-			/* S900 compressed sample format */
-			/* non-compressed sample size in bytes */
-			osver=3*samplecountpart;
-			/* number of un-compressed floppy blocks */
-			/* Note: without sample header */
-			osver=(osver+AKAI_FL_BLOCKSIZE-1)/AKAI_FL_BLOCKSIZE; /* round up */
-			if (osver==0){ /* unsuitable osver? */
-				osver=1; /* XXX non zero */
-			}
-		}else{
-			/* S900 non-compressed sample format */
-			osver=0;
-		}
-	}else if (type==AKAI_SAMPLE1000_FTYPE){
-		/* S1000 sample */
-		if ((osver==AKAI_OSVER_S900VOL)||(osver>AKAI_OSVER_S1100MAX)){
-			osver=AKAI_OSVER_S1000MAX; /* XXX */
-		}
-	}else{
-		/* S3000 sample */
-		if ((osver==AKAI_OSVER_S900VOL)||(osver>AKAI_OSVER_S3000MAX)){
-			osver=AKAI_OSVER_S3000MAX; /* XXX */
-		}
-	}
-
-	/* create file */
-	/* Note: akai_create_file() will correct osver if necessary */
-	if (akai_create_file(volp,&tmpfile,
-						 hdrsize+samplesize,
-						 findex,
-						 fname,
-						 osver,
-						 tagp)<0){
-		fprintf(stderr,"cannot create file\n");
-		goto akai_wav2sample_exit;
-	}
-
-#ifndef WAV_AKAIHEAD_DISABLE
-	/* check for sample header chunk in WAV file */
-	{
-		u_int wavakaiheadsearchtype;
-		int wavakaiheadtype;
-		u_int wavakaiheadsize;
-		u_int bc;
-
-		/* matching type */
-		if (type==AKAI_SAMPLE900_FTYPE){
-			wavakaiheadsearchtype=WAV_AKAIHEADTYPE_SAMPLE900;
-		}else if (type==AKAI_SAMPLE1000_FTYPE){
-			wavakaiheadsearchtype=WAV_AKAIHEADTYPE_SAMPLE1000;
-		}else{
-			wavakaiheadsearchtype=WAV_AKAIHEADTYPE_SAMPLE3000;
 		}
 
-		wavakaiheadtype=wav_find_akaihead(wavfd,&bc,&wavakaiheadsize,extrasize,wavakaiheadsearchtype);
-		if (wavakaiheadtype<0){
-			goto akai_wav2sample_exit;
-		}
-		bcount+=bc;
-
-		if ((wavakaiheadtype==(int)wavakaiheadsearchtype)&&(wavakaiheadsize==hdrsize)){
-			/* found matching sample header chunk */
-			wavakaiheadfound=1;
-		}else{
-			wavakaiheadfound=0;
-		}
-	}
-#endif
-
-	if (type==AKAI_SAMPLE900_FTYPE){
-#ifndef WAV_AKAIHEAD_DISABLE
-		if (wavakaiheadfound){
-			/* read S900 sample header */
-			if (READ(wavfd,(u_char *)&s900hdr,hdrsize)!=(int)hdrsize){
-				fprintf(stderr,"cannot read sample header\n");
-				goto akai_wav2sample_exit;
-			}
-			bcount+=hdrsize;
-#if 1
-			printf("S900 sample header imported from WAV\n");
-#endif
-		}else
-#endif
-		{
-			/* create S900 sample header */
-			bzero(&s900hdr,sizeof(struct akai_sample900_s));
-
-			s900hdr.srate[1]=0xff&(samplerate>>8);
-			s900hdr.srate[0]=0xff&samplerate;
-
-			s900hdr.npitch[1]=0xff&(SAMPLE900_NPITCH_DEF>>8); /* XXX */
-			s900hdr.npitch[0]=0xff&SAMPLE900_NPITCH_DEF; /* XXX */
-
-			s900hdr.pmode=SAMPLE900_PMODE_ONESHOT; /* XXX */
-
-			/* Note: use wavsamplecount for end */
-			s900hdr.end[3]=0xff&(wavsamplecount>>24);
-			s900hdr.end[2]=0xff&(wavsamplecount>>16);
-			s900hdr.end[1]=0xff&(wavsamplecount>>8);
-			s900hdr.end[0]=0xff&wavsamplecount;
-
-			/* Note: use wavsamplecount for llen */
-			s900hdr.llen[3]=0xff&(wavsamplecount>>24);
-			s900hdr.llen[2]=0xff&(wavsamplecount>>16);
-			s900hdr.llen[1]=0xff&(wavsamplecount>>8);
-			s900hdr.llen[0]=0xff&wavsamplecount;
-
-			s900hdr.dir=SAMPLE900_DIR_NORM; /* XXX */
+		bcount+=wavsamplesize;
+		if (wavsamplesize<wavsamplesizealloc){
+			/* zero padding */
+			bzero(wavbuf+wavsamplesize,wavsamplesizealloc-wavsamplesize);
 		}
 
-		/* set correct slen */
-		s900hdr.slen[3]=0xff&(samplecount>>24);
-		s900hdr.slen[2]=0xff&(samplecount>>16);
-		s900hdr.slen[1]=0xff&(samplecount>>8);
-		s900hdr.slen[0]=0xff&samplecount;
-
-		/* set RAM name of sample */
-		/* Note: akai_fixramname() not needed afterwards */
-		ascii2akai_name(sname,(u_char *)s900hdr.name,1); /* 1: S900 */
-
-		/* write sample header */
-		if (akai_write_file(0,(u_char *)&s900hdr,&tmpfile,0,hdrsize)<0){
-			fprintf(stderr,"cannot write sample header\n");
-			goto akai_wav2sample_exit;
-		}
-
-		if (s9cflag){
-			/* second pass to convert 16bit WAV sample format into S900 compressed sample format */
-			if (akai_sample900compr_wav2sample(sbuf,wavbuf,samplecountpart)<0){ /* sbuf!=NULL: second pass */
-				goto akai_wav2sample_exit;
-			}
-		}else{
-			/* convert 16bit WAV sample format into S900 non-compressed sample format */
-			akai_sample900noncompr_wav2sample(sbuf,wavbuf,samplecountpart);
-		}
-	}else{
-#ifndef WAV_AKAIHEAD_DISABLE
-		if (wavakaiheadfound){
-			/* read S1000/S3000 sample header */
-			/* Note: S1000 header is contained within S3000 header */
-			if (READ(wavfd,(u_char *)&s3000hdr,hdrsize)!=(int)hdrsize){
-				fprintf(stderr,"cannot read sample header\n");
-				goto akai_wav2sample_exit;
-			}
-			bcount+=hdrsize;
-#if 1
-			if (type==AKAI_SAMPLE1000_FTYPE){
-				printf("S1000 sample header imported from WAV\n");
+		/* sample size */
+		if (type==AKAI_SAMPLE900_FTYPE){ /* S900 sample? */
+			/* S900 sample */
+			/* number of samples per part  */
+			samplecountpart=(wavsamplecount+1)/2; /* round up */
+			samplecount=2*samplecountpart; /* samplecount must be an even number */
+			if (s9cflag){
+				/* S900 compressed sample format */
+				/* first pass to convert 16bit WAV sample format into S900 compressed sample format */
+				/* Note: first pass of akai_sample900compr_wav2sample() requires WAV sample to be loaded to wavbuf */
+				r=akai_sample900compr_wav2sample(NULL,wavbuf,samplecountpart); /* NULL: first pass */
+				if (r<0){
+					goto akai_wav2sample_exit;
+				}
+				/* size in bytes */
+				samplesize=(u_int)r;
 			}else{
-				printf("S3000 sample header imported from WAV\n");
+				/* S900 non-compressed sample format */
+				/* size in bytes */
+				samplesize=3*samplecountpart;
 			}
-#endif
-		}else
-#endif
-		{
-			/* create S3000 sample header */
-			/* Note: S1000 header is contained within S3000 header */
-			bzero(&s3000hdr,sizeof(struct akai_sample3000_s));
-
-			s3000hdr.s1000.blockid=SAMPLE1000_BLOCKID;
-			s3000hdr.s1000.bandw=SAMPLE1000_BANDW_20KHZ; /* XXX */
-			s3000hdr.s1000.rkey=60; /* XXX */
-			s3000hdr.s1000.dummy1=0x80; /* XXX */
-
-			/* Note: use samplelen-1 for end */
-			s3000hdr.s1000.end[3]=0xff&((samplecount-1)>>24);
-			s3000hdr.s1000.end[2]=0xff&((samplecount-1)>>16);
-			s3000hdr.s1000.end[1]=0xff&((samplecount-1)>>8);
-			s3000hdr.s1000.end[0]=0xff&(samplecount-1);
-
-			s3000hdr.s1000.stpaira[1]=0xff&(AKAI_SAMPLE1000_STPAIRA_NONE>>8);
-			s3000hdr.s1000.stpaira[0]=0xff&AKAI_SAMPLE1000_STPAIRA_NONE;
-
-			s3000hdr.s1000.srate[1]=0xff&(samplerate>>8);
-			s3000hdr.s1000.srate[0]=0xff&samplerate;
+		}else{
+			/* S1000/S3000 sample */
+			samplecountpart=0;
+			samplecount=wavsamplecount;
+			/* size in bytes */
+			samplesize=samplecount*2; /* *2 for 16bit per sample word */
 		}
-
-		/* set correct slen */
-		s3000hdr.s1000.slen[3]=0xff&(samplecount>>24);
-		s3000hdr.s1000.slen[2]=0xff&(samplecount>>16);
-		s3000hdr.s1000.slen[1]=0xff&(samplecount>>8);
-		s3000hdr.s1000.slen[0]=0xff&samplecount;
-
-		/* set RAM name of sample */
-		/* Note: akai_fixramname() not needed afterwards */
-		ascii2akai_name(sname,s3000hdr.s1000.name,0); /* 0: not S900 */
-
-		/* write sample header */
-		if (akai_write_file(0,(u_char *)&s3000hdr,&tmpfile,0,hdrsize)<0){
-			fprintf(stderr,"cannot write sample header\n");
+		if (hdrsize+samplesize>AKAI_FILE_SIZEMAX){
+			fprintf(stderr,"WAV too large\n");
+			/* unknown or unsupported */
+			ret=1; /* no error */
 			goto akai_wav2sample_exit;
 		}
 
-		/* Note: no sample format conversion necessary for S1000/S3000 */
-	}
+		if (type==AKAI_SAMPLE900_FTYPE){ /* S900 sample? */
+			/* allocate sample buffer */
+			sbuf=(u_char *)malloc(samplesize);
+			if (sbuf==NULL){
+				perror("malloc");
+				goto akai_wav2sample_exit;
+			}
+		}else{
+			/* Note: no sample format conversion necessary for S1000/S3000 */
+			sbuf=wavbuf;
+		}
 
-	/* write sample */
-	if (akai_write_file(0,sbuf,&tmpfile,hdrsize,hdrsize+samplesize)<0){
-		fprintf(stderr,"cannot write sample\n");
-		goto akai_wav2sample_exit;
-	}
+		/* sample name */
+		if ((type==AKAI_SAMPLE900_FTYPE)||(volp->type==AKAI_VOL_TYPE_S900)){ /* S900 sample or S900 volume? */
+			if (nlen>AKAI_NAME_LEN_S900){
+				nlen=AKAI_NAME_LEN_S900;
+			}
+		}else{
+			if (nlen>AKAI_NAME_LEN){
+				nlen=AKAI_NAME_LEN;
+			}
+		}
+		bcopy(wavname,sname,nlen);
+		sname[nlen]='\0';
 
-#if 1
-	printf("sample imported from WAV\n");
+		if(chnr == 1) {
+			sprintf(fname,"%12s%s",sname,tname);
+		} else {
+			if(ch == 0) {
+				sprintf(fname,"%-10s-L%s",sname,tname);
+				sprintf(sname,"%-10s-L",sname);
+			} else {
+				sprintf(fname,"%-10s-R%s",sname,tname);
+				sprintf(sname,"%-10s-R",sname);
+			}
+		}
+		
+		printf("fname=%s, sname=%s\n", fname, sname);
+
+	#ifdef WAV2SAMPLE_OVERWRITE
+		if ((findex==AKAI_CREATE_FILE_NOINDEX)
+			/* check if destination file already exists */
+			&&(akai_find_file(volp,&tmpfile,fname)==0)){
+			/* exists */
+			if (what&WAV2SAMPLE_OVERWRITE){
+				/* delete file */
+				printf("overwriting\n");
+				if (akai_delete_file(&tmpfile)<0){
+					fprintf(stderr,"cannot overwrite existing file\n");
+					goto akai_wav2sample_exit;
+				}
+			}else{
+				fprintf(stderr,"file name already used\n");
+				goto akai_wav2sample_exit;
+			}
+		}
+	#endif
+
+		/* correct osver if necessary */
+		if (type==AKAI_SAMPLE900_FTYPE){
+			/* S900 sample */
+			if (s9cflag){
+				/* S900 compressed sample format */
+				/* non-compressed sample size in bytes */
+				osver=3*samplecountpart;
+				/* number of un-compressed floppy blocks */
+				/* Note: without sample header */
+				osver=(osver+AKAI_FL_BLOCKSIZE-1)/AKAI_FL_BLOCKSIZE; /* round up */
+				if (osver==0){ /* unsuitable osver? */
+					osver=1; /* XXX non zero */
+				}
+			}else{
+				/* S900 non-compressed sample format */
+				osver=0;
+			}
+		}else if (type==AKAI_SAMPLE1000_FTYPE){
+			/* S1000 sample */
+			if ((osver==AKAI_OSVER_S900VOL)||(osver>AKAI_OSVER_S1100MAX)){
+				osver=AKAI_OSVER_S1000MAX; /* XXX */
+			}
+		}else{
+			/* S3000 sample */
+			if ((osver==AKAI_OSVER_S900VOL)||(osver>AKAI_OSVER_S3000MAX)){
+				osver=AKAI_OSVER_S3000MAX; /* XXX */
+			}
+		}
+
+		/* create file */
+		/* Note: akai_create_file() will correct osver if necessary */
+		if (akai_create_file(volp,&tmpfile,
+							 hdrsize+samplesize,
+							 findex,
+							 fname,
+							 osver,
+							 tagp)<0){
+			fprintf(stderr,"cannot create file\n");
+			goto akai_wav2sample_exit;
+		}
+
+#ifndef WAV_AKAIHEAD_DISABLE
+		/* check for sample header chunk in WAV file */
+		{
+			u_int wavakaiheadsearchtype;
+			int wavakaiheadtype;
+			u_int wavakaiheadsize;
+			u_int bc;
+
+			/* matching type */
+			if (type==AKAI_SAMPLE900_FTYPE){
+				wavakaiheadsearchtype=WAV_AKAIHEADTYPE_SAMPLE900;
+			}else if (type==AKAI_SAMPLE1000_FTYPE){
+				wavakaiheadsearchtype=WAV_AKAIHEADTYPE_SAMPLE1000;
+			}else{
+				wavakaiheadsearchtype=WAV_AKAIHEADTYPE_SAMPLE3000;
+			}
+
+			wavakaiheadtype=wav_find_akaihead(wavfd,&bc,&wavakaiheadsize,extrasize,wavakaiheadsearchtype);
+			if (wavakaiheadtype<0){
+				goto akai_wav2sample_exit;
+			}
+			bcount+=bc;
+
+			if ((wavakaiheadtype==(int)wavakaiheadsearchtype)&&(wavakaiheadsize==hdrsize)){
+				/* found matching sample header chunk */
+				wavakaiheadfound=1;
+			}else{
+				wavakaiheadfound=0;
+			}
+		}
 #endif
+
+		if (type==AKAI_SAMPLE900_FTYPE){
+#ifndef WAV_AKAIHEAD_DISABLE
+			if (wavakaiheadfound){
+				/* read S900 sample header */
+				if (READ(wavfd,(u_char *)&s900hdr,hdrsize)!=(int)hdrsize){
+					fprintf(stderr,"cannot read sample header\n");
+					goto akai_wav2sample_exit;
+				}
+				bcount+=hdrsize;
+#if 1
+				printf("S900 sample header imported from WAV\n");
+#endif
+			}else
+#endif
+			{
+				/* create S900 sample header */
+				bzero(&s900hdr,sizeof(struct akai_sample900_s));
+
+				s900hdr.srate[1]=0xff&(samplerate>>8);
+				s900hdr.srate[0]=0xff&samplerate;
+
+				s900hdr.npitch[1]=0xff&(SAMPLE900_NPITCH_DEF>>8); /* XXX */
+				s900hdr.npitch[0]=0xff&SAMPLE900_NPITCH_DEF; /* XXX */
+
+				s900hdr.pmode=SAMPLE900_PMODE_ONESHOT; /* XXX */
+
+				/* Note: use wavsamplecount for end */
+				s900hdr.end[3]=0xff&(wavsamplecount>>24);
+				s900hdr.end[2]=0xff&(wavsamplecount>>16);
+				s900hdr.end[1]=0xff&(wavsamplecount>>8);
+				s900hdr.end[0]=0xff&wavsamplecount;
+
+				/* Note: use wavsamplecount for llen */
+				s900hdr.llen[3]=0xff&(wavsamplecount>>24);
+				s900hdr.llen[2]=0xff&(wavsamplecount>>16);
+				s900hdr.llen[1]=0xff&(wavsamplecount>>8);
+				s900hdr.llen[0]=0xff&wavsamplecount;
+
+				s900hdr.dir=SAMPLE900_DIR_NORM; /* XXX */
+			}
+
+			/* set correct slen */
+			s900hdr.slen[3]=0xff&(samplecount>>24);
+			s900hdr.slen[2]=0xff&(samplecount>>16);
+			s900hdr.slen[1]=0xff&(samplecount>>8);
+			s900hdr.slen[0]=0xff&samplecount;
+
+			/* set RAM name of sample */
+			/* Note: akai_fixramname() not needed afterwards */
+			ascii2akai_name(sname,(u_char *)s900hdr.name,1); /* 1: S900 */
+
+			/* write sample header */
+			if (akai_write_file(0,(u_char *)&s900hdr,&tmpfile,0,hdrsize)<0){
+				fprintf(stderr,"cannot write sample header\n");
+				goto akai_wav2sample_exit;
+			}
+
+			if (s9cflag){
+				/* second pass to convert 16bit WAV sample format into S900 compressed sample format */
+				if (akai_sample900compr_wav2sample(sbuf,wavbuf,samplecountpart)<0){ /* sbuf!=NULL: second pass */
+					goto akai_wav2sample_exit;
+				}
+			}else{
+				/* convert 16bit WAV sample format into S900 non-compressed sample format */
+				akai_sample900noncompr_wav2sample(sbuf,wavbuf,samplecountpart);
+			}
+		}else{
+#ifndef WAV_AKAIHEAD_DISABLE
+			if (wavakaiheadfound){
+				/* read S1000/S3000 sample header */
+				/* Note: S1000 header is contained within S3000 header */
+				if (READ(wavfd,(u_char *)&s3000hdr,hdrsize)!=(int)hdrsize){
+					fprintf(stderr,"cannot read sample header\n");
+					goto akai_wav2sample_exit;
+				}
+				bcount+=hdrsize;
+#if 1
+				if (type==AKAI_SAMPLE1000_FTYPE){
+					printf("S1000 sample header imported from WAV\n");
+				}else{
+					printf("S3000 sample header imported from WAV\n");
+				}
+#endif
+			}else
+#endif
+			{
+				/* create S3000 sample header */
+				/* Note: S1000 header is contained within S3000 header */
+				bzero(&s3000hdr,sizeof(struct akai_sample3000_s));
+
+				s3000hdr.s1000.blockid=SAMPLE1000_BLOCKID;
+				s3000hdr.s1000.bandw=SAMPLE1000_BANDW_20KHZ; /* XXX */
+				s3000hdr.s1000.rkey=60; /* XXX */
+				s3000hdr.s1000.dummy1=0x80; /* XXX */
+
+				/* Note: use samplelen-1 for end */
+				s3000hdr.s1000.end[3]=0xff&((samplecount-1)>>24);
+				s3000hdr.s1000.end[2]=0xff&((samplecount-1)>>16);
+				s3000hdr.s1000.end[1]=0xff&((samplecount-1)>>8);
+				s3000hdr.s1000.end[0]=0xff&(samplecount-1);
+
+				s3000hdr.s1000.stpaira[1]=0xff&(AKAI_SAMPLE1000_STPAIRA_NONE>>8);
+				s3000hdr.s1000.stpaira[0]=0xff&AKAI_SAMPLE1000_STPAIRA_NONE;
+
+				s3000hdr.s1000.srate[1]=0xff&(samplerate>>8);
+				s3000hdr.s1000.srate[0]=0xff&samplerate;
+			}
+
+			/* set correct slen */
+			s3000hdr.s1000.slen[3]=0xff&(samplecount>>24);
+			s3000hdr.s1000.slen[2]=0xff&(samplecount>>16);
+			s3000hdr.s1000.slen[1]=0xff&(samplecount>>8);
+			s3000hdr.s1000.slen[0]=0xff&samplecount;
+
+			/* set loop data */
+			if(ltype == 0) {
+				u_int llen = lend - lstart;
+
+				s3000hdr.s1000.lnum = 1;
+				s3000hdr.s1000.lfirst = 0;
+				
+				s3000hdr.s1000.loop[0].at[3]=0xff&(lend>>24);
+				s3000hdr.s1000.loop[0].at[2]=0xff&(lend>>16);
+				s3000hdr.s1000.loop[0].at[1]=0xff&(lend>>8);
+				s3000hdr.s1000.loop[0].at[0]=0xff&lend;
+
+				s3000hdr.s1000.loop[0].flen[1]=0;
+				s3000hdr.s1000.loop[0].flen[0]=0;
+
+				s3000hdr.s1000.loop[0].len[3]=0xff&(llen>>24);
+				s3000hdr.s1000.loop[0].len[2]=0xff&(llen>>16);
+				s3000hdr.s1000.loop[0].len[1]=0xff&(llen>>8);
+				s3000hdr.s1000.loop[0].len[0]=0xff&llen;
+
+				s3000hdr.s1000.loop[0].time[1]=0xff&(SAMPLE1000LOOP_TIME_HOLD>>8);
+				s3000hdr.s1000.loop[0].time[0]=0xff&SAMPLE1000LOOP_TIME_HOLD;
+
+				printf("Created loop at %d with length %d\n", lend, llen);
+			} else {
+				printf("Unsupported loop type %d\n", ltype);
+			}
+
+			/* set RAM name of sample */
+			/* Note: akai_fixramname() not needed afterwards */
+			ascii2akai_name(sname,s3000hdr.s1000.name,0); /* 0: not S900 */
+
+			/* write sample header */
+			if (akai_write_file(0,(u_char *)&s3000hdr,&tmpfile,0,hdrsize)<0){
+				fprintf(stderr,"cannot write sample header\n");
+				goto akai_wav2sample_exit;
+			}
+
+			/* Note: no sample format conversion necessary for S1000/S3000 */
+		}
+
+		/* write sample */
+		if (akai_write_file(0,sbuf,&tmpfile,hdrsize,hdrsize+samplesize)<0){
+			fprintf(stderr,"cannot write sample\n");
+			goto akai_wav2sample_exit;
+		}
+	}
+
+	printf("sample imported from WAV\n");
 
 	ret=0; /* success */
 
 akai_wav2sample_exit:
+	if (tempbuf!=NULL){
+		free(tempbuf);
+	}
 	if (wavbuf!=NULL){
 		free(wavbuf);
 	}

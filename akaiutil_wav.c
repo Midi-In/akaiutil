@@ -120,11 +120,14 @@ wav_read_head(int indes,
 			  u_int *bcountp,
 			  u_int *datasizep,u_int *chnrp,u_int *sampratep,u_int *bitnrp,
 			  u_int *extrasizep,
-			  char **errstrp)
+			  char **errstrp,
+			  u_int *ltype, u_int *lstart, u_int *lend)
 {
 	struct wav_riffhead_s wavriffhead;
 	struct wav_chunkhead_s wavchunkhead;
 	struct wav_fmthead_s wavfmthead;
+	struct wav_smplhead_s wavsmplhead;
+	struct wav_loophead_s wavloophead;
 	u_int i;
 	u_int bcount;
 	u_int remain;
@@ -282,13 +285,65 @@ wav_read_head(int indes,
 	}
 
 	/* XXX check balign: must be (bitnr/8)*chnr */
+	READ(indes,(char *)&wavchunkhead,sizeof(struct wav_chunkhead_s));	
+	if(wavchunkhead.typestr[0] == 's' && 
+		wavchunkhead.typestr[1] == 'm' &&
+		wavchunkhead.typestr[2] == 'p' &&
+		wavchunkhead.typestr[3] == 'l') {
+		int nloops;
+		
+		READ(indes,(char *)&wavsmplhead,sizeof(struct wav_smplhead_s));
+		
+		nloops = wavsmplhead.sloops[0]
+			+(wavsmplhead.sloops[1]<<8)
+			+(wavsmplhead.sloops[2]<<16)
+			+(wavsmplhead.sloops[3]<<24);
+		printf("nloops = %d\n", nloops);
+		
+		if(nloops > 0) {
+			int type, start, end;
+
+			READ(indes,(char *)&wavloophead,sizeof(struct wav_loophead_s));
+			
+			type = wavloophead.type[0]
+				+(wavloophead.type[1]<<8)
+				+(wavloophead.type[2]<<16)
+				+(wavloophead.type[3]<<24);
+			start = wavloophead.start[0]
+				+(wavloophead.start[1]<<8)
+				+(wavloophead.start[2]<<16)
+				+(wavloophead.start[3]<<24);
+			end = wavloophead.end[0]
+				+(wavloophead.end[1]<<8)
+				+(wavloophead.end[2]<<16)
+				+(wavloophead.end[3]<<24);
+
+			if(ltype) {
+				*ltype = type;
+			}
+			if(lstart) {
+				*lstart = start;
+			}
+			if(lend) {
+				*lend = end;
+			}
+
+			printf("type = %d, start = %d, end = %d\n", type, start, end);
+			
+			LSEEK(indes,-((long)sizeof(struct wav_loophead_s)),SEEK_CUR);
+		}
+
+		LSEEK(indes,-((long)sizeof(struct wav_smplhead_s)),SEEK_CUR);
+	}
+		
+	LSEEK(indes,-((long)sizeof(struct wav_chunkhead_s)),SEEK_CUR);
 
 	/* search for data chunk */
 	for (;;){
 		/* read next chunk */
 		if (remain<sizeof(struct wav_chunkhead_s)){
 			if (errstrp!=NULL){
-				*errstrp="invalid file size";
+				*errstrp="invalid file size (DATA)";
 			}
 			return -1;
 		}
@@ -308,7 +363,7 @@ wav_read_head(int indes,
 			+(wavchunkhead.csize[3]<<24);
 		if (remain<csize){
 			if (errstrp!=NULL){
-				*errstrp="invalid file size";
+				*errstrp="invalid file size (DATA2)";
 			}
 			return -1;
 		}

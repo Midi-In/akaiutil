@@ -615,7 +615,7 @@ akai_wav2take(int wavfd,char *wavname,struct part_s *pp,u_int ti,u_int *bcountp,
 #else
 					  NULL,
 #endif
-					  &errstrp)<0){
+					  &errstrp, NULL, NULL, NULL)<0){
 		if (errstrp!=NULL){
 			fprintf(stderr,"%s\n",errstrp);
 		}

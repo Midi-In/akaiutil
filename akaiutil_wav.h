@@ -44,6 +44,7 @@ struct wav_chunkhead_s{
 	u_char csize[4];   /* following chunk-size in Bytes */
 };
 #define WAV_CHUNKHEAD_FMTSTR	"fmt "
+#define WAV_CHUNKHEAD_SMPLSTR   "smpl"
 #define WAV_CHUNKHEAD_DATASTR	"data"
 
 struct wav_fmthead_s{
@@ -58,7 +59,30 @@ struct wav_fmthead_s{
 /* end FormatChunk */
 };
 
+struct wav_loophead_s{
+/* continued SamplerLoop */
+	u_char ident[4];
+	u_char type[4];
+	u_char start[4];
+	u_char end[4];
+	u_char frac[4];
+	u_char playcount[4];
+/* end SamplerLoop */
+};
 
+struct wav_smplhead_s{
+/* continued SamplerChunk */
+	u_char manuf[4];
+	u_char prod[4];
+	u_char speriod[4];
+	u_char munote[4];
+	u_char mpfrac[4];
+	u_char smtpef[4];
+	u_char smtpeo[4];
+	u_char sloops[4];
+	u_char sdata[4];
+/* end SamplerChunk */
+};
 
 #define WAV_HEAD_SIZE	(sizeof(struct wav_riffhead_s)+sizeof(struct wav_chunkhead_s)+sizeof(struct wav_fmthead_s)+sizeof(struct wav_chunkhead_s))
 
@@ -83,7 +107,8 @@ extern int wav_write_head(int outdes,
 extern int wav_read_head(int indes,u_int *bcountp,
 						 u_int *datasizep,u_int *chnrp,u_int *sampratep,u_int *bitnrp,
 						 u_int *extrasizep,
-						 char **errstrp);
+						 char **errstrp,
+						 u_int *ltype, u_int *lstart, u_int *lend);
 
 #ifndef WAV_AKAIHEAD_DISABLE
 #define WAV_AKAIHEADTYPE_NONE			0x00
